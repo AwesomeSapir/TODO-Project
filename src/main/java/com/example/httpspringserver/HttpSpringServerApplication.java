@@ -1,5 +1,6 @@
 package com.example.httpspringserver;
 
+import org.apache.logging.log4j.ThreadContext;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.boot.SpringApplication;
@@ -11,6 +12,8 @@ import java.util.*;
 import java.util.stream.Stream;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @SpringBootApplication
 @RestController
@@ -20,7 +23,34 @@ public class HttpSpringServerApplication {
     private static final Logger requestLogger = LogManager.getLogger("request-logger");
     private static final Logger todoLogger = LogManager.getLogger("todo-logger");
     private static int idCounter = 1; // Counter for generating unique todo IDs
+    private static int requestCounter = 0;// Counter for unique requests
+
+    private static long requestStart = 0;
+
     private static final Map<Integer, Todo> todos = new HashMap<>(); // Map to store todos with their IDs as keys
+
+    public enum eHttpVerb {
+        GET, POST, DELETE, PUT
+    }
+
+    private void logRequest(eHttpVerb httpVerb){
+        requestCounter++;
+        ThreadContext.put("requestId", String.valueOf(requestCounter));
+        ServletRequestAttributes requestAttributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        String endpoint = null;
+        if (requestAttributes != null) {
+            endpoint = requestAttributes.getRequest().getRequestURI();
+        }
+        requestLogger.info("Incoming request | #" + requestCounter + " | resource: " + endpoint + " | HTTP Verb " + httpVerb.toString());
+        requestStart = System.currentTimeMillis();
+        ThreadContext.clearAll();
+    }
+
+    private void logRequestEnd(){
+        ThreadContext.put("requestId", String.valueOf(requestCounter));
+        requestLogger.debug("request #" + requestCounter + " duration: " + (System.currentTimeMillis() - requestStart) + "ms");
+        ThreadContext.clearAll();
+    }
 
     private JSONObject createJsonResponse(Object result, String errorMessage) {
         JSONObject jsonResponse = new JSONObject();
@@ -35,21 +65,24 @@ public class HttpSpringServerApplication {
 
     public static void main(String[] args) {
         SpringApplication app = new SpringApplication(HttpSpringServerApplication.class);
-        app.setDefaultProperties(Collections.singletonMap("server.port", "8496"));
+        app.setDefaultProperties(Collections.singletonMap("server.port", "9583"));
         app.run(args);
     }
 
     @GetMapping("/health")
     public ResponseEntity<String> health() {
-        logger.info("Received request for health endpoint");
+        logRequest(eHttpVerb.GET);
+
         String response = "OK";
-        logger.info("Sending response: {}", response);
+
+        logRequestEnd();
         return ResponseEntity.ok(response);
     }
 
     @PostMapping
     public ResponseEntity<String> createTodo(@RequestBody String requestBody){
-        logger.info("Received request to create TODO: {}", requestBody);
+        logRequest(eHttpVerb.POST);
+
         JSONObject json = new JSONObject(requestBody);
         Todo todo = new Todo(idCounter++, json);
 
@@ -75,13 +108,15 @@ public class HttpSpringServerApplication {
             response = ResponseEntity.ok(createJsonResponse(todo.getId(), null).toString());
             todos.put(todo.getId(), todo);
         }
-        logger.info("Sending response: {}", response);
+
+        logRequestEnd();
         return response;
     }
 
     @GetMapping("/size")
     public ResponseEntity<String> getTodosCount(@RequestParam("status") String requestStatus){
-        logger.info("Received request to get TODOs count with status: {}", requestStatus);
+        logRequest(eHttpVerb.GET);
+
         ResponseEntity<String> response;
 
         if (requestStatus.equals("ALL")){
@@ -95,14 +130,15 @@ public class HttpSpringServerApplication {
                 response = ResponseEntity.badRequest().build();
             }
         }
-        logger.info("Sending response: {}", response);
+
+        logRequestEnd();
         return response;
     }
 
     @GetMapping("/content")
     public ResponseEntity<String> getTodosContent(@RequestParam("status") String requestStatus,
                                                   @RequestParam(value = "sortBy", required = false) String requestSortBy){
-        logger.info("Received request to get TODOs content with status: {} and sortBy: {}", requestStatus, requestSortBy);
+        logRequest(eHttpVerb.GET);
 
         Comparator<Todo> comparator = Comparator.comparing(Todo::getId);
         if (requestSortBy != null) {
@@ -111,7 +147,7 @@ public class HttpSpringServerApplication {
                 case "TITLE" -> comparator = Comparator.comparing(Todo::getTitle);
                 case "ID" -> comparator = Comparator.comparing(Todo::getId);
                 default -> {
-                    logger.error("Invalid sortBy: {}", requestSortBy);
+                    //logger.error("Invalid sortBy: {}", requestSortBy);
                     return ResponseEntity.badRequest().build();
                 }
             }
@@ -124,7 +160,7 @@ public class HttpSpringServerApplication {
                 Todo.Status status = Todo.Status.valueOf(requestStatus);
                 stream = stream.filter(todo -> todo.getStatus() == status);
             } catch (IllegalArgumentException e){
-                logger.error("Invalid status: {}", requestStatus);
+                //logger.error("Invalid status: {}", requestStatus);
                 return ResponseEntity.badRequest().build();
             }
         }
@@ -134,13 +170,14 @@ public class HttpSpringServerApplication {
             jsonArray.put(todo.toJson());
         }
         ResponseEntity<String> response = ResponseEntity.ok(createJsonResponse(jsonArray, null).toString());
-        logger.info("Sending response: {}", response);
+
+        logRequestEnd();
         return response;
     }
 
     @PutMapping
     public ResponseEntity<String> updateTodoStatus(@RequestParam("id") int requestId, @RequestParam("status") String requestStatus){
-        logger.info("Received request to update status for TODO with ID {}: {}", requestId, requestStatus);
+        logRequest(eHttpVerb.PUT);
 
         Todo.Status prevStatus;
         Todo todo = todos.get(requestId);
@@ -151,37 +188,39 @@ public class HttpSpringServerApplication {
                 todo.setStatus(status);
                 todos.replace(requestId, todo);
             } catch (IllegalArgumentException e) {
-                logger.error("Invalid status: {}", requestStatus);
+                //logger.error("Invalid status: {}", requestStatus);
                 return ResponseEntity.badRequest().build();
             }
         }else {
-            logger.error("Todo not found for id: {}", requestId);
+            //logger.error("Todo not found for id: {}", requestId);
             return ResponseEntity
                     .status(HttpStatus.NOT_FOUND)
                     .body(createJsonResponse(null, "Error: no such TODO with id " + requestId).toString());
         }
 
         ResponseEntity<String> response = ResponseEntity.ok(createJsonResponse(prevStatus, null).toString());
-        logger.info("Sending response: {}", response);
+
+        logRequestEnd();
         return response;
     }
 
     @DeleteMapping
     public ResponseEntity<String> deleteTodo(@RequestParam("id") int requestId){
-        logger.info("Received request to delete TODO with ID: {}", requestId);
+        logRequest(eHttpVerb.DELETE);
 
         Todo todo = todos.get(requestId);
         if(todo != null){
             todos.remove(requestId);
         } else {
-            logger.error("Todo not found for id: {}", requestId);
+            //logger.error("Todo not found for id: {}", requestId);
             return ResponseEntity
                     .status(HttpStatus.NOT_FOUND)
                     .body(createJsonResponse(null, "Error: no such TODO with id " + requestId).toString());
         }
 
         ResponseEntity<String> response = ResponseEntity.ok(createJsonResponse(todos.size(), null).toString());
-        logger.info("Sending response: {}", response);
+
+        logRequestEnd();
         return response;
     }
 }

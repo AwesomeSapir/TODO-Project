@@ -12,15 +12,15 @@
         </File>
     </Appenders>
     <Loggers>
-        <Logger name="request-logger" level="info" additivity="false">
+        <Logger name="request-logger" level="debug" additivity="false">
             <AppenderRef ref="Console"/>
             <AppenderRef ref="RequestsLogger"/>
         </Logger>
-        <Logger name="todo-logger" level="info" additivity="false">
+        <Logger name="todo-logger" level="debug" additivity="false">
             <AppenderRef ref="Console"/>
             <AppenderRef ref="TodosLogger"/>
         </Logger>
-        <Root level="error">
+        <Root level="debug">
             <AppenderRef ref="Console"/>
         </Root>
     </Loggers>
