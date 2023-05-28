@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="INFO">
+    <Appenders>
+        <Console name="Console">
+            <PatternLayout pattern="%d{dd-MM-yyyy HH:mm:ss.SSS} %p: %m | request #%X{requestId}%n"/>
+        </Console>
+        <File name="RequestsLogger" fileName="logs/requests.log">
+            <PatternLayout pattern="%d{dd-MM-yyyy HH:mm:ss.SSS} %p: %m | request #%X{requestId}%n"/>
+        </File>
+        <File name="TodosLogger" fileName="logs/todos.log">
+            <PatternLayout pattern="%d{dd-MM-yyyy HH:mm:ss.SSS} %p: %m | request #%X{requestId}%n"/>
+        </File>
+    </Appenders>
+    <Loggers>
+        <Logger name="request-logger" level="info" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="RequestsLogger"/>
+        </Logger>
+        <Logger name="todo-logger" level="info" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="TodosLogger"/>
+        </Logger>
+        <Root level="error">
+            <AppenderRef ref="Console"/>
+        </Root>
+    </Loggers>
+</Configuration>
