@@ -1,5 +1,6 @@
 package com.example.httpspringserver;
 
+import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.ThreadContext;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -17,7 +18,6 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 @SpringBootApplication
 @RestController
-@RequestMapping("/todo")
 public class HttpSpringServerApplication {
 
     private static final Logger requestLogger = LogManager.getLogger("request-logger");
@@ -43,7 +43,6 @@ public class HttpSpringServerApplication {
         }
         requestLogger.info("Incoming request | #" + requestCounter + " | resource: " + endpoint + " | HTTP Verb " + httpVerb.toString());
         requestStart = System.currentTimeMillis();
-        ThreadContext.clearAll();
     }
 
     private void logRequestEnd(){
@@ -65,11 +64,11 @@ public class HttpSpringServerApplication {
 
     public static void main(String[] args) {
         SpringApplication app = new SpringApplication(HttpSpringServerApplication.class);
-        app.setDefaultProperties(Collections.singletonMap("server.port", "9583"));
+        app.setDefaultProperties(Collections.singletonMap("server.port", "9285"));
         app.run(args);
     }
 
-    @GetMapping("/health")
+    @GetMapping("/todo/health")
     public ResponseEntity<String> health() {
         logRequest(eHttpVerb.GET);
 
@@ -79,7 +78,7 @@ public class HttpSpringServerApplication {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping
+    @PostMapping("/todo")
     public ResponseEntity<String> createTodo(@RequestBody String requestBody){
         logRequest(eHttpVerb.POST);
 
@@ -90,30 +89,36 @@ public class HttpSpringServerApplication {
 
         for (Todo itrTodo : todos.values()) {
             if(itrTodo.getTitle().equals(todo.getTitle())) {
+                String message = "Error: TODO with the title [" + todo.getTitle() + "] already exists in the system";
                 response = ResponseEntity
                         .status(HttpStatus.CONFLICT)
-                        .body(createJsonResponse(null, "Error: TODO with the title [" + todo.getTitle() + "] already exists in the system").toString());
+                        .body(createJsonResponse(null, message).toString());
+                todoLogger.error(message);
                 idCounter--;
             }
         }
 
         if (response == null && todo.getDueDate() <= System.currentTimeMillis()) {
+            String message = "Error: Can't create new TODO that its due date is in the past";
             response = ResponseEntity
                     .status(HttpStatus.CONFLICT)
-                    .body(createJsonResponse(null, "Error: Can't create new TODO that its due date is in the past").toString());
+                    .body(createJsonResponse(null, message).toString());
+            todoLogger.error(message);
             idCounter--;
         }
 
         if (response == null){
             response = ResponseEntity.ok(createJsonResponse(todo.getId(), null).toString());
             todos.put(todo.getId(), todo);
+            todoLogger.info("Creating new TODO with Title [" + todo.getTitle() + "]");
+            todoLogger.debug("Currently there are " + (idCounter-1) + " TODOs in the system. New TODO will be assigned with id " + idCounter);
         }
 
         logRequestEnd();
         return response;
     }
 
-    @GetMapping("/size")
+    @GetMapping("/todo/size")
     public ResponseEntity<String> getTodosCount(@RequestParam("status") String requestStatus){
         logRequest(eHttpVerb.GET);
 
@@ -121,13 +126,16 @@ public class HttpSpringServerApplication {
 
         if (requestStatus.equals("ALL")){
             response = ResponseEntity.ok(createJsonResponse(todos.size(), null).toString());
+            todoLogger.info("Total TODOs count for state " + requestStatus + " is " + todos.size());
         } else {
             try {
                 Todo.Status status = Todo.Status.valueOf(requestStatus);
                 long count = todos.values().stream().filter(todo -> todo.getStatus() == status).count();
                 response = ResponseEntity.ok(createJsonResponse(count, null).toString());
+                todoLogger.info("Total TODOs count for state " + status.toString() + " is " + count);
             } catch (IllegalArgumentException e){
                 response = ResponseEntity.badRequest().build();
+                todoLogger.error("");
             }
         }
 
@@ -135,7 +143,7 @@ public class HttpSpringServerApplication {
         return response;
     }
 
-    @GetMapping("/content")
+    @GetMapping("/todo/content")
     public ResponseEntity<String> getTodosContent(@RequestParam("status") String requestStatus,
                                                   @RequestParam(value = "sortBy", required = false) String requestSortBy){
         logRequest(eHttpVerb.GET);
@@ -147,10 +155,11 @@ public class HttpSpringServerApplication {
                 case "TITLE" -> comparator = Comparator.comparing(Todo::getTitle);
                 case "ID" -> comparator = Comparator.comparing(Todo::getId);
                 default -> {
-                    //logger.error("Invalid sortBy: {}", requestSortBy);
                     return ResponseEntity.badRequest().build();
                 }
             }
+        } else {
+            requestSortBy = "ID";
         }
 
         Stream<Todo> stream = todos.values().stream()
@@ -160,25 +169,28 @@ public class HttpSpringServerApplication {
                 Todo.Status status = Todo.Status.valueOf(requestStatus);
                 stream = stream.filter(todo -> todo.getStatus() == status);
             } catch (IllegalArgumentException e){
-                //logger.error("Invalid status: {}", requestStatus);
                 return ResponseEntity.badRequest().build();
             }
         }
+
+        todoLogger.info("Extracting todos content. Filter: " + requestStatus + " | Sorting by: " + requestSortBy);
         List<Todo> sortedList = stream.toList();
         JSONArray jsonArray = new JSONArray();
         for (Todo todo : sortedList){
             jsonArray.put(todo.toJson());
         }
         ResponseEntity<String> response = ResponseEntity.ok(createJsonResponse(jsonArray, null).toString());
+        todoLogger.debug("There are a total of " + todos.size() + " todos in the system. The result holds " + sortedList.size() + " todos");
 
         logRequestEnd();
         return response;
     }
 
-    @PutMapping
+    @PutMapping("/todo")
     public ResponseEntity<String> updateTodoStatus(@RequestParam("id") int requestId, @RequestParam("status") String requestStatus){
         logRequest(eHttpVerb.PUT);
 
+        todoLogger.info("Update TODO id [" + requestId + "] state to " + requestStatus);
         Todo.Status prevStatus;
         Todo todo = todos.get(requestId);
         if(todo != null){
@@ -187,12 +199,13 @@ public class HttpSpringServerApplication {
                 Todo.Status status = Todo.Status.valueOf(requestStatus);
                 todo.setStatus(status);
                 todos.replace(requestId, todo);
+                todoLogger.debug("Todo id [" + requestId + "] state change: " + prevStatus + " --> " + status);
             } catch (IllegalArgumentException e) {
-                //logger.error("Invalid status: {}", requestStatus);
+                todoLogger.error("");
                 return ResponseEntity.badRequest().build();
             }
         }else {
-            //logger.error("Todo not found for id: {}", requestId);
+            todoLogger.error("Error: no such TODO with id " + requestId);
             return ResponseEntity
                     .status(HttpStatus.NOT_FOUND)
                     .body(createJsonResponse(null, "Error: no such TODO with id " + requestId).toString());
@@ -204,21 +217,64 @@ public class HttpSpringServerApplication {
         return response;
     }
 
-    @DeleteMapping
+    @DeleteMapping("/todo")
     public ResponseEntity<String> deleteTodo(@RequestParam("id") int requestId){
         logRequest(eHttpVerb.DELETE);
 
         Todo todo = todos.get(requestId);
         if(todo != null){
             todos.remove(requestId);
+            todoLogger.info("Removing todo id " + requestId);
+            todoLogger.debug("After removing todo id [" + requestId + "] there are " + todos.size() + " TODOs in the system");
         } else {
-            //logger.error("Todo not found for id: {}", requestId);
+            todoLogger.error("Error: no such TODO with id " + requestId);
             return ResponseEntity
                     .status(HttpStatus.NOT_FOUND)
                     .body(createJsonResponse(null, "Error: no such TODO with id " + requestId).toString());
         }
 
         ResponseEntity<String> response = ResponseEntity.ok(createJsonResponse(todos.size(), null).toString());
+
+        logRequestEnd();
+        return response;
+    }
+
+    @GetMapping("/log/level")
+    public ResponseEntity<String> getLoggerLevel(@RequestParam("logger-name") String loggerName){
+        logRequest(eHttpVerb.GET);
+
+        ResponseEntity<String> response;
+        if(loggerName.equals("request-logger")){
+            response = ResponseEntity.ok(requestLogger.getLevel().name().toUpperCase());
+        } else if(loggerName.equals("todo-logger")){
+            response = ResponseEntity.ok(todoLogger.getLevel().name().toUpperCase());
+        } else {
+            response = ResponseEntity.badRequest().body("Invalid logger name (request-logger/todo-logger)");
+        }
+
+        logRequestEnd();
+        return response;
+    }
+
+    @PutMapping("/logs/level")
+    public ResponseEntity<String> setLoggerLevel(@RequestParam("logger-name") String loggerName, @RequestParam("logger-level") String loggerLevel){
+        logRequest(eHttpVerb.PUT);
+
+        ResponseEntity<String> response;
+
+        try {
+            Level newLevel = Level.valueOf(loggerLevel.toUpperCase());
+            response = ResponseEntity.ok(newLevel.name().toUpperCase());
+            if(loggerLevel.equals("request-logger")){
+                requestLogger.atLevel(newLevel);
+            } else if(loggerName.equals("todo-logger")){
+                todoLogger.atLevel(newLevel);
+            } else {
+                response = ResponseEntity.badRequest().body("Invalid logger level");
+            }
+        } catch (IllegalArgumentException e){
+            response = ResponseEntity.badRequest().body("Invalid logger name (request-logger/todo-logger)");
+        }
 
         logRequestEnd();
         return response;
